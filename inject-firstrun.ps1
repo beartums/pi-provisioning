@@ -22,6 +22,7 @@ param(
     [string]$NasPassword  = "",
     [string]$NasCreds     = "",    # Path to existing creds file — contents are embedded
     [string]$DockerUser   = "beartums",
+    [string]$Timezone     = "",       # e.g. "America/New_York" — empty means no change
     [switch]$SkipNas,
     [switch]$SkipDocker,
     [switch]$LegacyBoot              # Use /boot instead of /boot/firmware (Bullseye and older)
@@ -169,6 +170,13 @@ done
 apt-get update -y -qq
 $NasSection
 $DockerSection
+
+$(if (-not [string]::IsNullOrEmpty($Timezone)) { @"
+# ── Timezone ─────────────────────────────────────────────────────────────────
+timedatectl set-timezone "$Timezone" \
+  && echo "[`$(date -Iseconds)] Timezone set to $Timezone" \
+  || echo "[`$(date -Iseconds)] WARNING: failed to set timezone $Timezone"
+"@ })
 
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 echo "[`$(date -Iseconds)] -- pi-setup-firstrun.sh complete — cleaning up --"

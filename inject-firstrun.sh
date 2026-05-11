@@ -18,6 +18,7 @@
 #   --nas-password PASS   CIFS password
 #   --nas-creds FILE      Path to existing credentials file (embedded into the image)
 #   --docker-user USER    User to add to docker group (default: beartums)
+#   --timezone TZ         Timezone to set on the Pi (default: no change)
 #   --skip-nas            Skip NAS setup
 #   --skip-docker         Skip Docker setup
 #   --legacy-boot         Target /boot instead of /boot/firmware (Bullseye and older)
@@ -40,6 +41,7 @@ NAS_USER=""
 NAS_PASSWORD=""
 NAS_CREDS_FILE=""
 DOCKER_USER="beartums"
+TIMEZONE=""
 SKIP_NAS=false
 SKIP_DOCKER=false
 LEGACY_BOOT=false
@@ -55,6 +57,7 @@ while [[ $# -gt 0 ]]; do
     --nas-password) NAS_PASSWORD="$2";   shift 2 ;;
     --nas-creds)    NAS_CREDS_FILE="$2"; shift 2 ;;
     --docker-user)  DOCKER_USER="$2";    shift 2 ;;
+    --timezone)     TIMEZONE="$2";       shift 2 ;;
     --skip-nas)     SKIP_NAS=true;       shift ;;
     --skip-docker)  SKIP_DOCKER=true;    shift ;;
     --legacy-boot)  LEGACY_BOOT=true;    shift ;;
@@ -196,6 +199,14 @@ else
   echo "[$(date -Iseconds)] WARNING: user '${DOCKER_USER_VAL}' not found — skipping docker group"
 fi
 DOCKER_USER_BLOCK
+fi)
+
+$(if [[ -n "$TIMEZONE" ]]; then cat <<TZ_BLOCK
+# ── Timezone ─────────────────────────────────────────────────────────────────
+timedatectl set-timezone "${TIMEZONE}" \
+  && echo "[$(date -Iseconds)] Timezone set to ${TIMEZONE}" \
+  || echo "[$(date -Iseconds)] WARNING: failed to set timezone ${TIMEZONE}"
+TZ_BLOCK
 fi)
 
 # ── Cleanup: remove this script and its systemd.run entry ────────────────────
