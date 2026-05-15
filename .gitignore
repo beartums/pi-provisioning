@@ -1,0 +1,23 @@
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Linux
+*~
+.nfs*
+
+# Pi disk images — default cache is ~/.pi-images (outside repo) but ignore
+# in case --cache-dir points here
+*.img
+*.img.xz
+*.zip
+
+# Reference files captured from real SD cards — contain PII, not needed by scripts
+cloud-init/reference/
+
+# Editor
+.vscode/
+*.swp
+*.swo
