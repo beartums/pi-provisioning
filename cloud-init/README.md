@@ -26,6 +26,25 @@ into cloud-init, which handles everything.
   --wifi-ssid MyNetwork --wifi-password wifipass
 ```
 
+### Windows
+
+Flash the SD card with [Raspberry Pi Imager](https://www.raspberrypi.com/software/), then write
+the cloud-init config to the mounted boot partition with the PowerShell script:
+
+```powershell
+# Minimal
+.\inject-cloud-init.ps1 -BootDrive E: -Hostname mypi
+
+# Full example
+.\inject-cloud-init.ps1 -BootDrive E: -Hostname mypi `
+  -PiUser beartums -Timezone America/New_York `
+  -NasHost 192.168.1.10 -NasUser eric `
+  -WifiSsid MyNetwork -WifiPassword wifipass
+```
+
+Requires **WSL2** (preferred) or **Python 3.12** for SHA-512 password hashing.
+Raspberry Pi Imager handles the flash — this script only writes the cloud-init config files.
+
 ---
 
 ## Options
@@ -159,6 +178,57 @@ NAS credentials are written to `user-data` on the FAT32 boot partition at flash 
 moved to `/etc/cifs-credentials` (chmod 600) by cloud-init during first boot. They are
 readable by anyone with physical access to the SD card until the Pi has completed its
 first boot. Fine for a home network — keep the card secure until booted.
+
+---
+
+## Testing
+
+`test-cloud-init.sh` validates the generated config and optionally boots a QEMU VM to verify
+provisioning end-to-end. It does not touch any SD card or real hardware.
+
+### Static validation — any platform
+
+Generates a test config and runs 16 checks (YAML validity, cmdline.txt, user, sudo, SSH key,
+packages, Docker, NAS, display). Requires `bash` and `python3`.
+
+```bash
+./test-cloud-init.sh --validate-only --skip-display
+```
+
+**Windows**: run in WSL2 or Git Bash (both include bash and python3).
+
+### Full QEMU boot test — macOS or Linux ARM64
+
+Downloads an Ubuntu 24.04 ARM64 cloud image (~600 MB, cached), boots it in QEMU, runs
+cloud-init, SSHes in, and checks Docker install, NAS fstab, sudo, and credentials.
+
+```bash
+./test-cloud-init.sh --skip-display
+```
+
+| Platform | Acceleration | First SSH |
+|----------|-------------|-----------|
+| macOS Apple Silicon | HVF (auto-detected) | ~30–60 s |
+| Linux ARM64 with KVM | KVM (auto-detected) | ~30–60 s |
+| Linux x86_64 | TCG (emulated) | Very slow — not recommended |
+| Windows | Not supported natively | Use WSL2 |
+
+### Install prerequisites
+
+**macOS**:
+```bash
+brew install qemu
+```
+
+**Ubuntu / Debian**:
+```bash
+sudo apt install qemu-system-arm qemu-utils ovmf xorriso
+```
+
+**Fedora**:
+```bash
+sudo dnf install qemu-system-aarch64 qemu-img edk2-aarch64 xorriso
+```
 
 ---
 
