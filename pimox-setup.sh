@@ -327,6 +327,23 @@ apt-get install -y proxmox-ve postfix open-iscsi pve-edk2-firmware-aarch64
 
 echo "[$(date -Iseconds)] Proxmox VE installation complete."
 
+# Remove the "No valid subscription" nag from the web UI.
+# A dpkg hook re-applies this patch after every proxmox-widget-toolkit upgrade.
+cat > /usr/local/sbin/pve-nag-patch.sh <<'EOF'
+#!/usr/bin/env bash
+JS=/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+[[ -f "$JS" ]] || exit 0
+sed -Ezi.bak "s/(Ext.Msg.show\(\{[^}]*title: gettext\('No valid sub)/void(\({ \/\/\1/g" "$JS"
+EOF
+chmod +x /usr/local/sbin/pve-nag-patch.sh
+
+cat > /etc/apt/apt.conf.d/86pve-nag-buster <<'EOF'
+DPkg::Post-Invoke { "/usr/local/sbin/pve-nag-patch.sh || true"; };
+EOF
+
+/usr/local/sbin/pve-nag-patch.sh
+echo "[$(date -Iseconds)] Subscription nag patched."
+
 # Disable this service so it doesn't run again on next boot
 systemctl disable pimox-install.service
 SCRIPT

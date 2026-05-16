@@ -147,6 +147,9 @@ check_contains "pimox-install.sh sets DEBIAN_FRONTEND"          "DEBIAN_FRONTEND
 check_contains "pimox-install.sh pre-seeds postfix debconf"     "postfix/main_mailer_type"                    "$PIMOX_SCRIPT"
 check_contains "pimox-install.sh self-disables service"         "systemctl disable pimox-install.service"     "$PIMOX_SCRIPT"
 check_contains "pimox-install.sh logs to /var/log"              "pimox-install.log"                           "$PIMOX_SCRIPT"
+check_contains "nag patch: pve-nag-patch.sh created"           "pve-nag-patch.sh"                            "$PIMOX_SCRIPT"
+check_contains "nag patch: dpkg hook installed"                 "86pve-nag-buster"                            "$PIMOX_SCRIPT"
+check_contains "nag patch: sed command present"                 "No valid sub"                                "$PIMOX_SCRIPT"
 check_contains "service: After=network-online.target"           "After=network-online.target"                 "$PIMOX_SCRIPT"
 check_contains "service: Wants=network-online.target"           "Wants=network-online.target"                 "$PIMOX_SCRIPT"
 check_contains "service: ExecStart points to install script"    "ExecStart=/usr/local/sbin/pimox-install.sh"  "$PIMOX_SCRIPT"
@@ -232,6 +235,8 @@ run_mock_integration() {
   check_contains    "[${codename}] pimox-install.sh: DEBIAN_FRONTEND set"  "DEBIAN_FRONTEND"  "$install"
   check_contains    "[${codename}] pimox-install.sh: self-disables"        "systemctl disable" "$install"
   check_contains    "[${codename}] pimox-install.sh: logs to file"         "pimox-install.log" "$install"
+  check_contains    "[${codename}] pimox-install.sh: creates nag patch"    "pve-nag-patch.sh"  "$install"
+  check_contains    "[${codename}] pimox-install.sh: installs dpkg hook"   "86pve-nag-buster"  "$install"
 
   # pimox-install.service
   local service="${tr}/etc/systemd/system/pimox-install.service"

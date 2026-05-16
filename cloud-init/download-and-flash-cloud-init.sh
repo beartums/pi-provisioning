@@ -526,6 +526,8 @@ if [[ "$PIMOX" == "true" ]]; then
   wd '      echo "postfix postfix/mailname           string $(hostname)" | debconf-set-selections'
   wd '      apt-get install -y proxmox-ve postfix open-iscsi pve-edk2-firmware-aarch64'
   wd '      echo "[$(date -Iseconds)] Proxmox VE installation complete."'
+  wd '      /usr/local/sbin/pve-nag-patch.sh'
+  wd '      echo "[$(date -Iseconds)] Subscription nag patched."'
   wd '      systemctl disable pimox-install.service'
   wd ""
   # Systemd service (enables itself on first reboot, then self-disables after install)
@@ -556,6 +558,23 @@ if [[ "$PIMOX" == "true" ]]; then
   wd "    content: |"
   wd "      preserve_hostname: true"
   wd "      manage_etc_hosts: false"
+  wd ""
+  # Nag patch script — called by pimox-install.sh after proxmox-ve installs
+  wd "  - path: /usr/local/sbin/pve-nag-patch.sh"
+  wd "    permissions: '0755'"
+  wd "    owner: root:root"
+  wd "    content: |"
+  wd '      #!/usr/bin/env bash'
+  wd '      JS=/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js'
+  wd '      [[ -f "$JS" ]] || exit 0'
+  wd '      sed -Ezi.bak "s/(Ext.Msg.show\(\{[^}]*title: gettext\('"'"'No valid sub)/void(\({ \/\/\1/g" "$JS"'
+  wd ""
+  # dpkg hook: re-applies the patch after every proxmox-widget-toolkit upgrade
+  wd "  - path: /etc/apt/apt.conf.d/86pve-nag-buster"
+  wd "    owner: root:root"
+  wd "    permissions: '0644'"
+  wd "    content: |"
+  wd '      DPkg::Post-Invoke { "/usr/local/sbin/pve-nag-patch.sh || true"; };'
 fi
 
 # ── Provisioning script ────────────────────────────────────────────────────────
