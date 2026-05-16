@@ -27,6 +27,9 @@ warn()  { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 step()  { echo -e "\n${BOLD}──── $* ────${RESET}"; }
 die()   { echo -e "${RED}[ERR]${RESET}   $*" >&2; exit 1; }
 
+# macOS requires 'sed -i ""'; Linux accepts 'sed -i' only
+_sed_i() { [[ "$(uname -s)" == "Darwin" ]] && sed -i '' "$@" || sed -i "$@"; }
+
 confirm() {
   [[ "$AUTO_YES" == "true" ]] && return 0
   local prompt="${1:-Continue?}"
@@ -63,13 +66,38 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# ─── Test-mode setup ─────────────────────────────────────────────────────────
+# Set PIMOX_TEST_ROOT=<dir> to run without root/ARM64 and redirect all file
+# writes to that directory. Used by test-pimox-setup.sh.
+TR="${PIMOX_TEST_ROOT:-}"
+if [[ -n "$TR" ]]; then
+  mkdir -p "${TR}/etc/apt/trusted.gpg.d" "${TR}/etc/apt/sources.list.d" \
+           "${TR}/etc/cloud/cloud.cfg.d"  "${TR}/etc/network" \
+           "${TR}/etc/systemd/system"     "${TR}/usr/local/sbin"
+  : > "${TR}/etc/hosts"
+  : > "${TR}/etc/cloud/cloud.cfg"
+  : > "${TR}/etc/network/interfaces"
+  apt-get()    { true; }
+  curl()       { local _o=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-o" ]] && { _o="$2"; shift 2; } || shift; done; [[ -n "$_o" ]] && touch "$_o" || true; }
+  gpg()        { local _o=""; while [[ $# -gt 0 ]]; do [[ "$1" == "-o" ]] && { _o="$2"; shift 2; } || shift; done; [[ -n "$_o" ]] && cat > "$_o" || cat > /dev/null; }
+  hostnamectl(){ true; }
+  systemctl()  { true; }
+  passwd()     { true; }
+  chpasswd()   { cat > /dev/null; }
+  reboot()     { true; }
+fi
+
 # ─── Preflight checks ────────────────────────────────────────────────────────
 step "Preflight"
 
-[[ $EUID -eq 0 ]] || die "This script must be run as root (sudo ./pimox-setup.sh ...)"
-
-ARCH=$(uname -m)
-[[ "$ARCH" == "aarch64" ]] || die "PiMox requires an ARM64 (aarch64) system. Detected: $ARCH"
+if [[ -n "$TR" ]]; then
+  info "Test mode: redirecting file writes to $TR"
+  ARCH="aarch64"
+else
+  [[ $EUID -eq 0 ]] || die "This script must be run as root (sudo ./pimox-setup.sh ...)"
+  ARCH=$(uname -m)
+  [[ "$ARCH" == "aarch64" ]] || die "PiMox requires an ARM64 (aarch64) system. Detected: $ARCH"
+fi
 ok "Architecture: $ARCH"
 
 # Detect OS
@@ -158,23 +186,24 @@ ok "Hostname set to: $NEW_HOSTNAME"
 step "Step 3: Update /etc/hosts"
 
 # Remove old 127.0.x.x entries for the hostname, then add static IP entry
-HOSTS_BACKUP="/etc/hosts.pimox-backup-$(date +%s)"
-cp /etc/hosts "$HOSTS_BACKUP"
+HOSTS_FILE="${TR}/etc/hosts"
+HOSTS_BACKUP="${TR}/etc/hosts.pimox-backup-$(date +%s)"
+cp "$HOSTS_FILE" "$HOSTS_BACKUP"
 info "Backed up /etc/hosts → $HOSTS_BACKUP"
 
 # Remove any existing entries for old or new hostname
-sed -i "/\b${OLD_HOSTNAME}\b/d" /etc/hosts
-sed -i "/\b${NEW_HOSTNAME}\b/d" /etc/hosts
+_sed_i "/\b${OLD_HOSTNAME}\b/d" "$HOSTS_FILE"
+_sed_i "/\b${NEW_HOSTNAME}\b/d" "$HOSTS_FILE"
 
 # Append the static IP → hostname mapping
-echo "${STATIC_IP}    ${NEW_HOSTNAME}" >> /etc/hosts
+echo "${STATIC_IP}    ${NEW_HOSTNAME}" >> "$HOSTS_FILE"
 ok "Added: ${STATIC_IP} → ${NEW_HOSTNAME}"
 
 # ─── Step 4: Disable cloud-init hostname management ─────────────────────────
 step "Step 4: Disable cloud-init hostname management"
 
 # Drop-in override — survives cloud.cfg package updates
-CLOUD_DROPIN_DIR="/etc/cloud/cloud.cfg.d"
+CLOUD_DROPIN_DIR="${TR}/etc/cloud/cloud.cfg.d"
 if [[ -d "$CLOUD_DROPIN_DIR" ]]; then
   cat > "${CLOUD_DROPIN_DIR}/99-pimox-hostname.cfg" <<'EOF'
 # Prevent cloud-init from overwriting the hostname and /etc/hosts
@@ -188,10 +217,10 @@ else
 fi
 
 # Also comment out all hostname-related modules in the main cloud.cfg
-CLOUD_CFG="/etc/cloud/cloud.cfg"
+CLOUD_CFG="${TR}/etc/cloud/cloud.cfg"
 if [[ -f "$CLOUD_CFG" ]]; then
   for module in set_hostname update_hostname update_etc_hosts; do
-    sed -i "s/^\(\s*\)- ${module}\b/\1# - ${module}/" "$CLOUD_CFG"
+    _sed_i "s/^\(\s*\)- ${module}\b/\1# - ${module}/" "$CLOUD_CFG"
   done
   ok "Commented out hostname modules (set_hostname, update_hostname, update_etc_hosts) in $CLOUD_CFG"
 else
@@ -212,7 +241,7 @@ fi
 # ─── Step 6: Add PiMox GPG key ───────────────────────────────────────────────
 step "Step 6: Add PiMox GPG key"
 
-GPG_OUT="/etc/apt/trusted.gpg.d/proxmox-release-${CODENAME}.gpg"
+GPG_OUT="${TR}/etc/apt/trusted.gpg.d/proxmox-release-${CODENAME}.gpg"
 curl -fsSL "https://mirrors.lierfang.com/proxmox-port/debian/dists/${CODENAME}/Release.gpg" \
   | gpg --dearmor -o "$GPG_OUT"
 ok "GPG key written to $GPG_OUT"
@@ -220,7 +249,7 @@ ok "GPG key written to $GPG_OUT"
 # ─── Step 7: Add PiMox repository ────────────────────────────────────────────
 step "Step 7: Add PiMox apt repository"
 
-REPO_FILE="/etc/apt/sources.list.d/pveport.list"
+REPO_FILE="${TR}/etc/apt/sources.list.d/pveport.list"
 cat > "$REPO_FILE" <<EOF
 deb https://mirrors.lierfang.com/proxmox-port/debian ${CODENAME} pve-no-subscription
 EOF
@@ -249,11 +278,12 @@ ok "ifupdown2 installed"
 # ─── Step 10: Configure network bridge (vmbr0) ───────────────────────────────
 step "Step 10: Configure /etc/network/interfaces (vmbr0 bridge)"
 
-NETIF_BACKUP="/etc/network/interfaces.pimox-backup-$(date +%s)"
-[[ -f /etc/network/interfaces ]] && cp /etc/network/interfaces "$NETIF_BACKUP" \
+NETIF_FILE="${TR}/etc/network/interfaces"
+NETIF_BACKUP="${TR}/etc/network/interfaces.pimox-backup-$(date +%s)"
+[[ -f "$NETIF_FILE" ]] && cp "$NETIF_FILE" "$NETIF_BACKUP" \
   && info "Backed up existing interfaces → $NETIF_BACKUP"
 
-cat > /etc/network/interfaces <<EOF
+cat > "$NETIF_FILE" <<EOF
 # Generated by pimox-setup.sh on $(date -Iseconds)
 auto lo
 iface lo inet loopback
@@ -276,8 +306,8 @@ info "Bridge vmbr0 → ${IFACE}, ${STATIC_IP}/${NETMASK}, gw ${GATEWAY}"
 # ─── Step 11: Create post-reboot service for Proxmox VE install ──────────────
 step "Step 11: Register post-reboot Proxmox VE installer service"
 
-SERVICE_FILE="/etc/systemd/system/pimox-install.service"
-INSTALL_SCRIPT="/usr/local/sbin/pimox-install.sh"
+SERVICE_FILE="${TR}/etc/systemd/system/pimox-install.service"
+INSTALL_SCRIPT="${TR}/usr/local/sbin/pimox-install.sh"
 
 cat > "$INSTALL_SCRIPT" <<'SCRIPT'
 #!/usr/bin/env bash
