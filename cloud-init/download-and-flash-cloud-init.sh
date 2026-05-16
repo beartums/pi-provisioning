@@ -27,6 +27,13 @@
 #   --skip-nas             Skip NAS mount setup
 #   --skip-docker          Skip Docker setup
 #   --skip-display         Skip ssd1306 OLED display setup
+#   --pimox                Install Proxmox VE (two-phase; Pi reboots after first boot)
+#   --root-password PASS   Proxmox root password ('same' to reuse --pi-password; default: prompt)
+#   --pimox-ip ADDR        Static IP for Proxmox bridge (default: auto-detect)
+#   --pimox-gateway ADDR   Default gateway (default: auto-detect)
+#   --pimox-netmask MASK   CIDR prefix length, e.g. 24 (default: auto-detect)
+#   --pimox-dns ADDR       DNS server (default: auto-detect)
+#   --pimox-iface NAME     Network interface to bridge (default: auto-detect)
 #   --ssh-pubkey KEY       SSH public key to add to the user's authorized_keys
 #                          (accepts a key string or a path to a .pub file)
 #   --boot-path DIR        Skip download+flash; write cloud-init files directly to DIR
@@ -82,6 +89,14 @@ DOCKER_USER=""
 SKIP_NAS=false
 SKIP_DOCKER=false
 SKIP_DISPLAY=false
+PIMOX=false
+PIMOX_IP=""
+PIMOX_GATEWAY=""
+PIMOX_NETMASK=""
+PIMOX_DNS=""
+PIMOX_IFACE=""
+ROOT_PASSWORD=""
+HASHED_ROOT_PASS=""
 BOOT_PATH_ARG=""
 SSH_PUBKEY=""
 AUTO_YES=false
@@ -108,7 +123,14 @@ while [[ $# -gt 0 ]]; do
     --docker-user)   DOCKER_USER="$2";   shift 2 ;;
     --skip-nas)      SKIP_NAS=true;      shift ;;
     --skip-docker)   SKIP_DOCKER=true;   shift ;;
-    --skip-display)  SKIP_DISPLAY=true;       shift ;;
+    --skip-display)  SKIP_DISPLAY=true;  shift ;;
+    --pimox)         PIMOX=true;         shift ;;
+    --root-password) ROOT_PASSWORD="$2"; shift 2 ;;
+    --pimox-ip)      PIMOX_IP="$2";      shift 2 ;;
+    --pimox-gateway) PIMOX_GATEWAY="$2"; shift 2 ;;
+    --pimox-netmask) PIMOX_NETMASK="$2"; shift 2 ;;
+    --pimox-dns)     PIMOX_DNS="$2";     shift 2 ;;
+    --pimox-iface)   PIMOX_IFACE="$2";   shift 2 ;;
     --ssh-pubkey)    SSH_PUBKEY="$2";     shift 2 ;;
     --boot-path)     BOOT_PATH_ARG="$2";  shift 2 ;;
     -y|--yes)        AUTO_YES=true;         shift ;;
@@ -118,6 +140,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -z "$DOCKER_USER" ]] && DOCKER_USER="$PI_USER"
+
+# --pimox implies skip-docker and skip-display (Proxmox manages its own containers)
+if [[ "$PIMOX" == "true" ]]; then
+  SKIP_DOCKER=true
+  SKIP_DISPLAY=true
+fi
 
 # Resolve --ssh-pubkey to a key string (accept either a literal key or a path to a .pub file)
 if [[ -n "$SSH_PUBKEY" && -f "$SSH_PUBKEY" ]]; then
@@ -171,6 +199,27 @@ password=${NAS_PASSWORD}"
 elif [[ "$SKIP_NAS" == "false" && -z "$NAS_HOST" ]]; then
   info "No --nas-host provided — skipping NAS setup"
   SKIP_NAS=true
+fi
+
+# ─── Proxmox root password ─────────────────────────────────────────────────────
+if [[ "$PIMOX" == "true" ]]; then
+  step "Proxmox root password"
+  if [[ "$ROOT_PASSWORD" == "same" ]]; then
+    ROOT_PASSWORD="$PI_PASSWORD"
+    ok "Root password: reusing pi-user password"
+  elif [[ -z "$ROOT_PASSWORD" ]]; then
+    read -rsp "$(echo -e "${YELLOW}Proxmox root password [Enter to reuse pi-user password]:${RESET} ")" ROOT_PASSWORD; echo
+    if [[ -z "$ROOT_PASSWORD" ]]; then
+      ROOT_PASSWORD="$PI_PASSWORD"
+      ok "Root password: reusing pi-user password"
+    else
+      ok "Root password: set (custom)"
+    fi
+  else
+    ok "Root password: provided via --root-password"
+  fi
+  HASHED_ROOT_PASS=$(openssl passwd -6 "$ROOT_PASSWORD")
+  ok "Root password hashed (SHA-512)"
 fi
 
 # ─── Boot-path mode vs normal flash mode ───────────────────────────────────────
@@ -461,6 +510,54 @@ if [[ "$SKIP_DISPLAY" == "false" ]]; then
   wd "      network_interfaces=eth0,wlan0"
 fi
 
+# ── Pimox static files ────────────────────────────────────────────────────────
+if [[ "$PIMOX" == "true" ]]; then
+  # Phase 2 installer (runs on first reboot via pimox-install.service)
+  wd "  - path: /usr/local/sbin/pimox-install.sh"
+  wd "    permissions: '0755'"
+  wd "    owner: root:root"
+  wd "    content: |"
+  wd '      #!/usr/bin/env bash'
+  wd '      set -euo pipefail'
+  wd '      exec >> /var/log/pimox-install.log 2>&1'
+  wd '      echo "[$(date -Iseconds)] Starting Proxmox VE installation..."'
+  wd '      export DEBIAN_FRONTEND=noninteractive'
+  wd '      echo "postfix postfix/main_mailer_type select Local only"   | debconf-set-selections'
+  wd '      echo "postfix postfix/mailname           string $(hostname)" | debconf-set-selections'
+  wd '      apt-get install -y proxmox-ve postfix open-iscsi pve-edk2-firmware-aarch64'
+  wd '      echo "[$(date -Iseconds)] Proxmox VE installation complete."'
+  wd '      systemctl disable pimox-install.service'
+  wd ""
+  # Systemd service (enables itself on first reboot, then self-disables after install)
+  wd "  - path: /etc/systemd/system/pimox-install.service"
+  wd "    owner: root:root"
+  wd "    permissions: '0644'"
+  wd "    content: |"
+  wd "      [Unit]"
+  wd "      Description=PiMox -- Install Proxmox VE after reboot"
+  wd "      After=network-online.target"
+  wd "      Wants=network-online.target"
+  wd "      ConditionPathExists=/usr/local/sbin/pimox-install.sh"
+  wd "      "
+  wd "      [Service]"
+  wd "      Type=oneshot"
+  wd "      ExecStart=/usr/local/sbin/pimox-install.sh"
+  wd "      RemainAfterExit=yes"
+  wd "      StandardOutput=journal"
+  wd "      StandardError=journal"
+  wd "      "
+  wd "      [Install]"
+  wd "      WantedBy=multi-user.target"
+  wd ""
+  # cloud-init drop-in: prevent cloud-init from overwriting pimox hostname on subsequent boots
+  wd "  - path: /etc/cloud/cloud.cfg.d/99-pimox-hostname.cfg"
+  wd "    owner: root:root"
+  wd "    permissions: '0644'"
+  wd "    content: |"
+  wd "      preserve_hostname: true"
+  wd "      manage_etc_hosts: false"
+fi
+
 # ── Provisioning script ────────────────────────────────────────────────────────
 # Written to the Pi's root filesystem (not FAT boot partition) so it's executable.
 # Called from runcmd after all packages are installed.
@@ -481,6 +578,16 @@ ws "NAS_SHARE=\"${NAS_SHARE}\""
 ws "SKIP_DOCKER=${SKIP_DOCKER}"
 ws "DOCKER_USER=\"${DOCKER_USER}\""
 ws "SKIP_DISPLAY=${SKIP_DISPLAY}"
+ws "PI_HOSTNAME=\"${PI_HOSTNAME}\""
+ws "PIMOX=${PIMOX}"
+if [[ "$PIMOX" == "true" ]]; then
+  ws "PIMOX_IP=\"${PIMOX_IP}\""
+  ws "PIMOX_GATEWAY=\"${PIMOX_GATEWAY}\""
+  ws "PIMOX_NETMASK=\"${PIMOX_NETMASK}\""
+  ws "PIMOX_DNS=\"${PIMOX_DNS}\""
+  ws "PIMOX_IFACE=\"${PIMOX_IFACE}\""
+  ws "HASHED_ROOT_PASS=\"${HASHED_ROOT_PASS}\""
+fi
 ws ""
 ws "# ── Logging setup ───────────────────────────────────────────────────────────"
 ws "LOG=/var/log/pi-provisioning.log"
@@ -614,6 +721,102 @@ ws '  i2cdetect -y 1 2>/dev/null || log "i2cdetect not available"'
 ws 'fi'
 
 ws ""
+ws "# ── Pimox Phase 1 ───────────────────────────────────────────────────────────"
+ws 'if [[ "$PIMOX" == "true" ]]; then'
+ws '  step "Pimox Phase 1"'
+ws ""
+ws "  # Network auto-detection"
+ws '  PIFACE="$PIMOX_IFACE"'
+ws '  [[ -z "$PIFACE" ]] && PIFACE=$(ip -4 route show default 2>/dev/null | awk '"'"'/^default/{print $5;exit}'"'"')'
+ws '  [[ -n "$PIFACE" ]] || { fail "Could not detect network interface"; exit 1; }'
+ws '  log "Interface: $PIFACE"'
+ws ""
+ws '  SIP="$PIMOX_IP"'
+ws '  [[ -z "$SIP" ]] && SIP=$(ip -4 addr show "$PIFACE" 2>/dev/null | awk '"'"'/inet /{split($2,a,"/");print a[1];exit}'"'"')'
+ws '  [[ -n "$SIP" ]] || { fail "Could not detect IP on $PIFACE"; exit 1; }'
+ws '  log "Static IP: $SIP"'
+ws ""
+ws '  NM="$PIMOX_NETMASK"'
+ws '  [[ -z "$NM" ]] && NM=$(ip -4 addr show "$PIFACE" 2>/dev/null | awk '"'"'/inet /{split($2,a,"/");print a[2];exit}'"'"')'
+ws '  NM="${NM:-24}"'
+ws '  log "Netmask: /$NM"'
+ws ""
+ws '  GW="$PIMOX_GATEWAY"'
+ws '  [[ -z "$GW" ]] && GW=$(ip -4 route show default 2>/dev/null | awk '"'"'/^default/{print $3;exit}'"'"')'
+ws '  [[ -n "$GW" ]] || { fail "Could not detect gateway"; exit 1; }'
+ws '  log "Gateway: $GW"'
+ws ""
+ws '  PDNS="$PIMOX_DNS"'
+ws '  [[ -z "$PDNS" ]] && PDNS=$(awk '"'"'/^nameserver/{print $2;exit}'"'"' /etc/resolv.conf 2>/dev/null || true)'
+ws '  PDNS="${PDNS:-1.1.1.1}"'
+ws '  log "DNS: $PDNS"'
+ws ""
+ws '  CODENAME=$(. /etc/os-release 2>/dev/null && echo "${VERSION_CODENAME:-bookworm}" || echo "bookworm")'
+ws '  log "OS codename: $CODENAME"'
+ws ""
+ws "  # Update /etc/hosts with static IP → hostname mapping"
+ws '  log "Updating /etc/hosts..."'
+ws '  sed -i "/\b${PI_HOSTNAME}\b/d" /etc/hosts'
+ws '  echo "${SIP}    ${PI_HOSTNAME}" >> /etc/hosts'
+ws '  ok "Added ${SIP} -> ${PI_HOSTNAME} in /etc/hosts"'
+ws ""
+ws "  # Set root password (chpasswd -e accepts pre-hashed password)"
+ws '  echo "root:${HASHED_ROOT_PASS}" | chpasswd -e'
+ws '  ok "Root password set"'
+ws ""
+ws "  # Add PiMox GPG key"
+ws '  log "Adding PiMox GPG key..."'
+ws '  curl -fsSL "https://mirrors.lierfang.com/proxmox-port/debian/dists/${CODENAME}/Release.gpg" \'
+ws '    | gpg --dearmor -o "/etc/apt/trusted.gpg.d/proxmox-release-${CODENAME}.gpg"'
+ws '  ok "PiMox GPG key added"'
+ws ""
+ws "  # Add PiMox repository and refresh"
+ws '  echo "deb https://mirrors.lierfang.com/proxmox-port/debian ${CODENAME} pve-no-subscription" \'
+ws '    > /etc/apt/sources.list.d/pveport.list'
+ws '  apt-get update -y -qq'
+ws '  ok "PiMox apt repository added"'
+ws ""
+ws "  # Disable NetworkManager (conflicts with Proxmox bridge networking)"
+ws '  if systemctl is-active --quiet NetworkManager 2>/dev/null; then'
+ws '    systemctl disable --now NetworkManager && systemctl mask NetworkManager'
+ws '    ok "NetworkManager disabled and masked"'
+ws '  else'
+ws '    log "NetworkManager not active — skipping"'
+ws '  fi'
+ws ""
+ws "  # Install ifupdown2 (Debian-native networking, required by Proxmox)"
+ws '  log "Installing ifupdown2..."'
+ws '  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ifupdown2'
+ws '  ok "ifupdown2 installed"'
+ws ""
+ws "  # Configure vmbr0 Linux bridge"
+ws '  log "Configuring /etc/network/interfaces (vmbr0 bridge)..."'
+ws '  [[ -f /etc/network/interfaces ]] && cp /etc/network/interfaces /etc/network/interfaces.pimox-backup'
+ws '  cat > /etc/network/interfaces <<NETEOF'
+ws "# Generated by pi-provision.sh (pimox mode)"
+ws "auto lo"
+ws "iface lo inet loopback"
+ws ""
+ws 'auto ${PIFACE}'
+ws 'iface ${PIFACE} inet manual'
+ws ""
+ws "auto vmbr0"
+ws "iface vmbr0 inet static"
+ws '    address ${SIP}/${NM}'
+ws '    gateway ${GW}'
+ws '    dns-nameservers ${PDNS}'
+ws '    bridge-ports ${PIFACE}'
+ws "    bridge-stp off"
+ws "    bridge-fd 0"
+ws 'NETEOF'
+ws '  ok "vmbr0 bridge: ${PIFACE} -> vmbr0 @ ${SIP}/${NM}, gw ${GW}"'
+ws ""
+ws '  step "Pimox Phase 1 complete"'
+ws '  log "Proxmox VE will install on next boot via pimox-install.service"'
+ws '  log "Phase 2 log: /var/log/pimox-install.log"'
+ws '  log "Proxmox web UI: https://${SIP}:8006  (after Phase 2 completes)"'
+ws 'fi'
+ws ""
 ws 'step "pi-provision.sh complete"'
 ws 'log "Provisioning log : $LOG"'
 ws 'log "Cloud-init log   : /var/log/cloud-init-output.log"'
@@ -623,6 +826,18 @@ ws 'log "Cloud-init status: /run/cloud-init/status.json"'
 wd ""
 wd "runcmd:"
 wd "  - [ bash, /usr/local/sbin/pi-provision.sh ]"
+if [[ "$PIMOX" == "true" ]]; then
+  wd "  - [ systemctl, daemon-reload ]"
+  wd "  - [ systemctl, enable, pimox-install.service ]"
+fi
+
+if [[ "$PIMOX" == "true" ]]; then
+  wd ""
+  wd "power_state:"
+  wd "  mode: reboot"
+  wd "  delay: '+1'"
+  wd "  message: Rebooting to complete Pimox setup and install Proxmox VE"
+fi
 
 ok "user-data written: $USER_DATA"
 
@@ -738,6 +953,12 @@ info "i2c         : enabled (config.txt + rpi.interfaces)"
 [[ "$SKIP_NAS"     == "false" ]] && info "NAS         : //${NAS_HOST}/${NAS_SHARE} → /mnt/${NAS_SHARE}"
 [[ "$SKIP_DOCKER"  == "false" ]] && info "Docker      : will install for '${DOCKER_USER}'"
 [[ "$SKIP_DISPLAY" == "false" ]] && info "Display     : ssd1306 OLED (beartums/U6143_ssd1306)"
+if [[ "$PIMOX" == "true" ]]; then
+  info "Pimox       : enabled"
+  info "  Phase 1   : runs on first boot (hostname, bridge, GPG key, repo)"
+  info "  Phase 2   : runs after auto-reboot (installs proxmox-ve)"
+  info "  Web UI    : https://${PIMOX_IP:-<auto-detected-ip>}:8006  (after Phase 2)"
+fi
 info "Instance ID : $INSTANCE_ID"
 echo
 info "On first boot, cloud-init will run /usr/local/sbin/pi-provision.sh"

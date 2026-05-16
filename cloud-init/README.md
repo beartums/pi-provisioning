@@ -76,6 +76,13 @@ Requires:
 | `--skip-nas` | Skip NAS mount setup | — |
 | `--skip-docker` | Skip Docker setup | — |
 | `--skip-display` | Skip ssd1306 OLED display setup | — |
+| `--pimox` | Install Proxmox VE (two-phase; Pi auto-reboots after first boot) | — |
+| `--root-password PASS` | Proxmox root password (`same` to reuse `--pi-password`) | Prompt |
+| `--pimox-ip ADDR` | Static IP for Proxmox bridge | Auto-detect |
+| `--pimox-gateway ADDR` | Default gateway | Auto-detect |
+| `--pimox-netmask MASK` | CIDR prefix length (e.g. `24`) | Auto-detect |
+| `--pimox-dns ADDR` | DNS server | Auto-detect |
+| `--pimox-iface NAME` | Network interface to bridge | Auto-detect |
 | `-y`, `--yes` | Auto-approve non-destructive prompts | — |
 
 > The device confirmation always requires typing `yes` — it is never auto-skipped.
@@ -161,6 +168,50 @@ sudo systemctl restart ssd1306-display
 
 ---
 
+## Proxmox VE (PiMox)
+
+Pass `--pimox` to install [Proxmox VE](https://www.proxmox.com/en/proxmox-virtual-environment) on the Pi
+using the [lierfang ARM64 port](https://mirrors.lierfang.com/proxmox-port/debian/).
+Installation is fully automated and split across two boots:
+
+```bash
+./download-and-flash-cloud-init.sh \
+  --hostname pimox \
+  --pimox \
+  --pi-user beartums
+```
+
+### Phase 1 — first boot (cloud-init + pi-provision.sh)
+
+Runs automatically during the first cloud-init boot:
+
+1. Detects (or accepts) network interface, IP, gateway, DNS
+2. Writes static `/etc/network/interfaces` with a `vmbr0` Linux bridge
+3. Sets the Proxmox root password (hashed SHA-512, never cleartext in config files)
+4. Disables NetworkManager; installs `ifupdown2`
+5. Adds the PiMox GPG key and apt repository
+6. Registers `pimox-install.service` (runs on next boot)
+7. Reboots automatically after 1 minute
+
+### Phase 2 — second boot (pimox-install.service)
+
+Runs on the first reboot via a self-disabling systemd service:
+
+1. Installs `proxmox-ve`, `postfix`, `open-iscsi`, `pve-edk2-firmware-aarch64`
+2. Disables itself when complete
+
+**Web UI**: `https://<ip>:8006` — accessible once Phase 2 completes (login as `root`).
+
+**Logs**:
+| Log | Contents |
+|-----|----------|
+| `/var/log/pi-provisioning.log` | Phase 1 output |
+| `/var/log/pimox-install.log` | Phase 2 output |
+
+> `--pimox` implies `--skip-docker` and `--skip-display` — Proxmox manages containers directly.
+
+---
+
 ## Logs
 
 Both logs are on the Pi after first boot:
@@ -169,6 +220,7 @@ Both logs are on the Pi after first boot:
 |-----|----------|
 | `/var/log/pi-provisioning.log` | Timestamped output from `pi-provision.sh` |
 | `/var/log/cloud-init-output.log` | Full cloud-init output including package installs |
+| `/var/log/pimox-install.log` | Proxmox VE Phase 2 install output (`--pimox` only) |
 
 ```bash
 # Follow provisioning in real time after first boot
