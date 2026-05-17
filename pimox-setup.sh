@@ -33,7 +33,8 @@ _sed_i() { [[ "$(uname -s)" == "Darwin" ]] && sed -i '' "$@" || sed -i "$@"; }
 confirm() {
   [[ "$AUTO_YES" == "true" ]] && return 0
   local prompt="${1:-Continue?}"
-  read -rp "$(echo -e "${YELLOW}${prompt} [y/N]${RESET} ")" ans
+  # Read from /dev/tty so prompts work when stdin is a pipe (curl | bash)
+  read -rp "$(echo -e "${YELLOW}${prompt} [y/N]${RESET} ")" ans < /dev/tty
   [[ "${ans,,}" == "y" ]]
 }
 
