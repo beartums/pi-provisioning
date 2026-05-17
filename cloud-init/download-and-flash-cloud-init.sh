@@ -53,7 +53,7 @@ die()   { echo -e "${RED}[ERR]${RESET}   $*" >&2; exit 1; }
 
 confirm() {
   [[ "$AUTO_YES" == "true" ]] && return 0
-  read -rp "$(echo -e "${YELLOW}${1:-Continue?} [y/N]${RESET} ")" ans
+  read -rp "$(echo -e "${YELLOW}${1:-Continue?} [y/N]${RESET} ")" ans < /dev/tty
   [[ "${ans,,}" == "y" ]]
 }
 
@@ -174,8 +174,8 @@ ok "All dependencies present"
 step "Pi user credentials"
 
 if [[ -z "$PI_PASSWORD" ]]; then
-  read -rsp "$(echo -e "${YELLOW}Password for '${PI_USER}':${RESET} ")" PI_PASSWORD; echo
-  read -rsp "$(echo -e "${YELLOW}Confirm password:${RESET} ")" PI_PASS2; echo
+  read -rsp "$(echo -e "${YELLOW}Password for '${PI_USER}':${RESET} ")" PI_PASSWORD < /dev/tty; echo
+  read -rsp "$(echo -e "${YELLOW}Confirm password:${RESET} ")" PI_PASS2 < /dev/tty; echo
   [[ "$PI_PASSWORD" == "$PI_PASS2" ]] || die "Passwords do not match"
 fi
 HASHED_PASS=$(openssl passwd -6 "$PI_PASSWORD")
@@ -189,13 +189,13 @@ if [[ "$SKIP_NAS" == "false" && -n "$NAS_HOST" ]]; then
     ok "NAS credentials: $NAS_CREDS"
   elif [[ -n "$NAS_USER" ]]; then
     if [[ -z "$NAS_PASSWORD" ]]; then
-      read -rsp "$(echo -e "${YELLOW}NAS password for ${NAS_USER}:${RESET} ")" NAS_PASSWORD; echo
+      read -rsp "$(echo -e "${YELLOW}NAS password for ${NAS_USER}:${RESET} ")" NAS_PASSWORD < /dev/tty; echo
     fi
     NAS_CREDS_CONTENT="username=${NAS_USER}
 password=${NAS_PASSWORD}"
   else
-    read -rp  "$(echo -e "${YELLOW}NAS username:${RESET} ")" NAS_USER
-    read -rsp "$(echo -e "${YELLOW}NAS password:${RESET} ")" NAS_PASSWORD; echo
+    read -rp  "$(echo -e "${YELLOW}NAS username:${RESET} ")" NAS_USER < /dev/tty
+    read -rsp "$(echo -e "${YELLOW}NAS password:${RESET} ")" NAS_PASSWORD < /dev/tty; echo
     NAS_CREDS_CONTENT="username=${NAS_USER}
 password=${NAS_PASSWORD}"
   fi
@@ -211,7 +211,7 @@ if [[ "$PIMOX" == "true" ]]; then
     ROOT_PASSWORD="$PI_PASSWORD"
     ok "Root password: reusing pi-user password"
   elif [[ -z "$ROOT_PASSWORD" ]]; then
-    read -rsp "$(echo -e "${YELLOW}Proxmox root password [Enter to reuse pi-user password]:${RESET} ")" ROOT_PASSWORD; echo
+    read -rsp "$(echo -e "${YELLOW}Proxmox root password [Enter to reuse pi-user password]:${RESET} ")" ROOT_PASSWORD < /dev/tty; echo
     if [[ -z "$ROOT_PASSWORD" ]]; then
       ROOT_PASSWORD="$PI_PASSWORD"
       ok "Root password: reusing pi-user password"
@@ -265,7 +265,7 @@ else
       printf "  ${BOLD}%d)${RESET} %-45s %s%b\n" "$((i+1))" "$LABEL" "$SIZE" "$DEFAULT"
     done
     echo
-    read -rp "$(echo -e "${YELLOW}Choose a distro [1]:${RESET} ")" CHOICE
+    read -rp "$(echo -e "${YELLOW}Choose a distro [1]:${RESET} ")" CHOICE < /dev/tty
     CHOICE="${CHOICE:-1}"
     [[ "$CHOICE" =~ ^[0-9]+$ ]] || die "Invalid selection"
     DISTRO_IDX=$(( CHOICE - 1 ))
@@ -321,13 +321,13 @@ else
         awk '/^\/dev\/disk/{dev=$1} /GB|MB/{printf "  %-12s %s %s\n", dev, $1, $2}' | sort -u || \
         diskutil list external physical 2>/dev/null | head -30
       echo
-      read -rp "$(echo -e "${YELLOW}Enter device (e.g. /dev/disk4):${RESET} ")" DEVICE
+      read -rp "$(echo -e "${YELLOW}Enter device (e.g. /dev/disk4):${RESET} ")" DEVICE < /dev/tty
     else
       echo "  Detected removable/SD devices:"; echo
       lsblk -d -o NAME,SIZE,MODEL,TRAN 2>/dev/null | grep -E "usb|sd[a-z]$|mmcblk" || \
         lsblk -d -o NAME,SIZE,MODEL | tail -n +2
       echo
-      read -rp "$(echo -e "${YELLOW}Enter device (e.g. /dev/sdb):${RESET} ")" DEVICE
+      read -rp "$(echo -e "${YELLOW}Enter device (e.g. /dev/sdb):${RESET} ")" DEVICE < /dev/tty
     fi
   fi
 
@@ -346,7 +346,7 @@ else
   warn "About to flash ${BOLD}${DEVICE}${RESET}${YELLOW} with ${DISTRO_LABEL}"
   echo -e "  $DEVICE_INFO"
   echo
-  read -rp "$(echo -e "${RED}Type 'yes' to confirm (this will erase the device):${RESET} ")" CONFIRM_DEV
+  read -rp "$(echo -e "${RED}Type 'yes' to confirm (this will erase the device):${RESET} ")" CONFIRM_DEV < /dev/tty
   [[ "$CONFIRM_DEV" == "yes" ]] || die "Aborted"
 
   # ── Flash ─────────────────────────────────────────────────────────────────────
