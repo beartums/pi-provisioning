@@ -359,9 +359,11 @@ apt-get install -y proxmox-ve postfix open-iscsi pve-edk2-firmware-aarch64
 # log2ram mounts a tmpfs over /var/log at boot, syncing from /var/hdd.log.
 # Proxmox log dirs created during install won't exist in the backing store,
 # so they vanish from the tmpfs on next boot. Create them in both places now.
+# pveproxy runs as www-data — its log dir must be owned accordingly.
 for _d in pveproxy pvedaemon pve qemu-server lxc; do
   mkdir -p "/var/log/${_d}" "/var/hdd.log/${_d}"
 done
+chown www-data: /var/log/pveproxy /var/hdd.log/pveproxy
 echo "[$(date -Iseconds)] Proxmox log directories ensured in log2ram backing store"
 
 echo "[$(date -Iseconds)] Proxmox VE installation complete."
