@@ -169,6 +169,7 @@ check_contains "interfaces: bridge-fd 0"                        "bridge-fd 0"   
 check_contains "log2ram installed by default"                   "apt-get install -y log2ram"                  "$PIMOX_SCRIPT"
 check_contains "log2ram: --skip-log2ram opt-out present"        "skip-log2ram"                                "$PIMOX_SCRIPT"
 check_contains "phase2: conditional pveport.list cleanup present" "pxvirt-sources.list"                         "$PIMOX_SCRIPT"
+check_contains "phase2: log2ram backing dirs created"            "var/hdd.log"                                 "$PIMOX_SCRIPT"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PHASE 2 — URL reachability (--check-urls only)
